@@ -4,18 +4,18 @@ _NOTE: This is a living document and is subject to change, as and when any unide
 
 <!-- TOC -->
 * [Pocket Network IBC Roadmap](#pocket-network-ibc-roadmap)
-  * [Inter-Blockchain Communication (IBC) 📱](#inter-blockchain-communication--ibc--)
+  * [Inter-Blockchain Communication (IBC) 📱](#inter-blockchain-communication--ibc--📱)
     * [Overview](#overview)
   * [Roadmap](#roadmap)
     * [Specification Implementation - Core](#specification-implementation---core)
-      * [Phase 1 🏗️](#phase-1-)
-      * [Phase 2 🏗️](#phase-2-)
+      * [Phase 1 🏗️](#phase-1-🏗️)
+      * [Phase 2 🏗️](#phase-2-🏗️)
     * [Specification Implementation - Relayer](#specification-implementation---relayer)
-      * [Phase 3 🏗️](#phase-3-)
+      * [Phase 3 🏗️](#phase-3-🏗️)
     * [Specification Implementation - Light Clients](#specification-implementation---light-clients)
-      * [Phase 4 🏗️](#phase-4-)
+      * [Phase 4 🏗️](#phase-4-🏗️)
     * [Specification Implementation - Applications](#specification-implementation---applications)
-      * [Phase 5 🏗️](#phase-5-)
+      * [Phase 5 🏗️](#phase-5-🏗️)
 <!-- TOC -->
 
 ## Inter-Blockchain Communication (IBC) 📱
