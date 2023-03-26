@@ -1,4 +1,4 @@
-# Pocket Network IBC Roadmap
+# Pocket Network ↔ IBC
 
 _NOTE: This is a living document and is subject to change, as and when any unidentified hurdles become identified._
 
