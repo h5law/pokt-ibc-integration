@@ -85,7 +85,7 @@ The implementation of ICS-02 (Client Semantics) [6] involves creating a ‘light
 
 **Non-Goals**
 
-// DISCUSS_IN_THIS_COMMIT: Light clients are primarily needed for verifying state, so what do you think of "not doing" here?
+<!-- TODO: Define what a fully feature light client is and compare it to ICS-02 -->
 
 1. Build a fully featured “light client” outside the scope of verifying state updates
 
