@@ -61,8 +61,6 @@ We use our fork of Celestia's SMT [7] which has the following functions [8]:
 ```go
 func (*SparseMerkleTree) Prove(key []byte) SparseMerkleProof
 func (*SparseMerkleTree) ProveCompact(key []byte) SparseCompactMerkleProof
-func (*SparseMerkleTree) Prove(key []byte) SparseMerkleProof
-func (*SparseMerkleTree) ProveCompact(key []byte) SparseCompactMerkleProof
 ```
 
 These allow us to generate `SparseMerkleProof` types (or their compressed variants for space) for the root of the tree they are operated on. If the leaf may be updated it is advised to use the following instead:
