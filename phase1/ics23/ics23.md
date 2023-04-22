@@ -1,6 +1,6 @@
 # **ICS-23** (Vector Commitments) <!-- omit in toc -->
 
-**NOTE**: This document is still a work in progress and as such may change over time, as and when any issues are identified.
+**NOTE**: This document is a work-in-progress living documest and, as such, may change over time, when issues are identified or new learnings are made.
 
 - [Overview](#overview)
 - [Types \& Functions](#types--functions)
