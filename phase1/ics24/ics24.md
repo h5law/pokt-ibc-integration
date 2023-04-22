@@ -5,15 +5,15 @@
 - [Overview](#overview)
 - [Module Structure](#module-structure)
 - [Paths, Identifiers and Separators](#paths-identifiers-and-separators)
-  - [**Identifiers**](#identifiers)
-    - [**Lengths**](#lengths)
-  - [**Paths**](#paths)
-  - [**Separators**](#separators)
+  - [Identifiers](#identifiers)
+    - [Lengths](#lengths)
+  - [Paths](#paths)
+  - [Separators](#separators)
 - [Key-Value Store](#key-value-store)
-  - [**Provable Store**](#provable-store)
-  - [**Private Store**](#private-store)
-  - [**Backend Store**](#backend-store)
-    - [**Changes**](#changes)
+  - [Provable Store](#provable-store)
+  - [Private Store](#private-store)
+  - [Backend Store](#backend-store)
+    - [Changes](#changes)
 - [Path Space](#path-space)
 - [References](#references)
 
@@ -67,7 +67,7 @@ flowchart TD
 
 Paths, identifiers and separators are used to store, and retrieve and remove items from the key-value store defined below. They must follow certain rules.
 
-### **Identifiers**
+### Identifiers
 
 An `Identifier` is a bytestring used as the key for an object stored in the state, such as: a connection, a channel or a light-client.
 
@@ -113,7 +113,7 @@ func ValidateIdentifier(identifier string) bool {
 }
 ```
 
-#### **Lengths**
+#### Lengths
 
 By default, identifiers have the following minimum and maximum lengths in characters:
 
@@ -123,11 +123,11 @@ By default, identifiers have the following minimum and maximum lengths in charac
 
 However, by using the code snippet above we would have the potential for `71P32` total unique identifier strings, or: `41694455590162700292588668110667281308822641049600000000`, which we are unlikely to ever use.
 
-### **Paths**
+### Paths
 
 A `Path` is a bytestring used as the key for an object stored in state and _must only contain_: identifiers, constant strings and the separator "`/`".
 
-### **Separators**
+### Separators
 
 The only valid separator for use in the IBC module key-value stores is a `/`. The separator is used to separate two identifiers or an identifier and a constant bytestring.
 
@@ -150,21 +150,21 @@ _Note_: Here the value is defined as a byte slice, the actual encoding of the da
 
 This IBC module **must** provide 2 separate instances of this interface: `provableStore` and `privateStore`. The `provableStore` is storage read (proven) by external chains, whereas the `privateStore` is local to the host machine and is not to be read by external parties.
 
-### **Provable Store**
+### Provable Store
 
 - In the provable store the underlying key-value store of the `Store` interface **must** be able to be externally verifiable in accordance with `ICS-23`
 - In the provable store all values in the store **must** use canonically encoded data structures in accordance with the various ICS specifications (serialised protobufs)
 
-### **Private Store**
+### Private Store
 
 - In the provable store the underlying key-value store of the `Store` interface **may** be able to be externally verifiable in accordance with `ICS-23` but this is not required
 - In the provable store all values in the store **may** use canonically encoded data structures in accordance with the various ICS specifications (serialised protobufs) but this is not required
 
-### **Backend Store**
+### Backend Store
 
-For the purposes of the Pocket Implementation of ICS-24, we should implement a single `Store` interface utilising the `pocket-network/smt` package forked from `celestiaorg/smt`. As outlined in [ICS-23](../ics23/ics23.md) we can utilise the `smt` package's exposed functions to generate proofs for a given path in the underlying KVStore.
+For the purposes of the Pocket Implementation of ICS-24, we should implement a single `Store` interface utilising the `pokt-network/smt` package forked from `celestiaorg/smt`. As outlined in [ICS-23](../ics23/ics23.md) we can utilise the `smt` package's exposed functions to generate proofs for a given path in the underlying KVStore.
 
-#### **Changes**
+#### Changes
 
 Some potential changes that could better enable this:
 
