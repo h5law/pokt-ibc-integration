@@ -82,7 +82,7 @@ flowchart LR
     D[Root Hash]
   end
   subgraph P[Commitment Path]
-    E[Commitment Prefix]
+    E[CommitmentPrefix]
     G[CommitmentPath]
     E --+Path--> G
   end
@@ -92,7 +92,7 @@ flowchart LR
   end
   subgraph GP[Generate Proof]
     J[CommitmentState]
-    K[Commitment Path]
+    K[CommitmentPath]
     L[SparseMerkleProof]
     J --> L
     K --> L
