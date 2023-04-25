@@ -13,8 +13,20 @@
   - [Provable Store](#provable-store)
   - [Private Store](#private-store)
   - [Backend Store](#backend-store)
-    - [Changes](#changes)
+    - [Consensus State](#consensus-state)
 - [Path Space](#path-space)
+- [Host Requirements](#host-requirements)
+  - [Consensus State Introspection](#consensus-state-introspection)
+  - [Client State Validation](#client-state-validation)
+  - [Commitment Path Introspection](#commitment-path-introspection)
+  - [Timestamp access](#timestamp-access)
+  - [Port System](#port-system)
+  - [Datagram Submission](#datagram-submission)
+  - [Exception System](#exception-system)
+  - [Event Logging System](#event-logging-system)
+  - [Data Availability](#data-availability)
+  - [Handling Upgrades](#handling-upgrades)
+- [Implementation References](#implementation-references)
 - [References](#references)
 
 ## Overview
@@ -36,8 +48,9 @@ flowchart TD
         subgraph 24[ICS-24]
             HR[Host Requirements]
         end
-        subgraph 25[ICS-25/Pocket Specific]
-            IF[Handler Interface]
+        subgraph I[IBC Interface]
+            IF[ICS-25 Handler Interface]
+            IR[ICS-26 Routing Module]
         end
     end
     subgraph 2[ICS-02]
@@ -60,7 +73,6 @@ flowchart TD
     IBC ---> 5
     IBC ---> 4
     IBC ---> 20
-
 ```
 
 ## Paths, Identifiers and Separators
@@ -162,22 +174,207 @@ This IBC module **must** provide 2 separate instances of this interface: `provab
 
 ### Backend Store
 
-For the purposes of the Pocket Implementation of ICS-24, we should implement a single `Store` interface utilising the `pokt-network/smt` package forked from `celestiaorg/smt`. As outlined in [ICS-23](../ics23/ics23.md) we can utilise the `smt` package's exposed functions to generate proofs for a given path in the underlying KVStore.
+For the purposes of the Pocket Implementation of ICS-24, we should implement a single `Store` interface. This should utilise the `pokt-network/smt` package as its backend storage. This will allow for the generation of proofs for the `provableStore` paths and for the `privateStore` paths alike. Behind the SMT there will be 2 KVStores, one for nodes another for values. This allows for the key/value pairs to be inserted with the following function:
 
-#### Changes
+```go
+func (*SMT) Update(key, value []byte) (root []byte, err error)
+```
 
-Some potential changes that could better enable this:
+#### Consensus State
 
-1. Move the definitions of the order of the consensus' state merkle trees (account, pools, transactions, etc.) into a protobuf enum in the shared directory.
-2. Expose a function in the `persistence/state.go` file that enables for all the current trees, their nodes and leaves to be returned in their current state.
-3. Add an IBC config file to the node, saying they opt-in to IBC features
-4. If the node has IBC features enabled, when a new block is applied, call the function from (2) and add the current state of the network (`consensusState`) to the `consensusStore`
-   - The `consensusStore` does not have to store indefinitely and as such can be pruned to only maintain the `smt` states for the latest `n` heights
+For the other stores the SMT with the node and value KVStores will work perfectly fine, and the proofs will be easily generated for a given path. However, the `consensusStates` entry in the tree must contain the information of the 7 SMTs that make up the state as defined in `persistence/state.go`. In order to better store this data some potential routes are explored below:
+
+1. Export state and rebuild the trees:
+   - Move the definitions of the order of the consensus state merkle trees (account, pools, transactions, etc.) into a protobuf enum in the shared directory.
+   - Expose a function that allows for the current state to be exported in a standardised format (JSON, KVStores, Protobuf) that can be serialised into a `[]byte`
+   - Expose a function that can hydrate this serialised `[]byte` back into the exported format and utilise the tree enum to rebuild the trees individually and recreate the 7 subtrees to create a proof as and when this is needed
 
 ## Path Space
+
+The ICS-24 specification documents the following paths, their types and where they are used in the IBC module:
+
+| Store         | Path format                                                                 | Value type     | Defined in |
+| ------------- | --------------------------------------------------------------------------- | -------------- | ---------- |
+| provableStore | "clients/{identifier}/clientState"                                          | ClientState    | ICS 2      |
+| provableStore | "clients/{identifier}/consensusStates/{height}"                             | ConsensusState | ICS 2      |
+| privateStore  | "clients/{identifier}/connections                                           | []Identifier   | ICS 3      |
+| provableStore | "connections/{identifier}"                                                  | ConnectionEnd  | ICS 3      |
+| privateStore  | "ports/{identifier}"                                                        | CapabilityKey  | ICS 5      |
+| provableStore | "channelEnds/ports/{identifier}/channels/{identifier}"                      | ChannelEnd     | ICS 4      |
+| provableStore | "nextSequenceSend/ports/{identifier}/channels/{identifier}"                 | uint64         | ICS 4      |
+| provableStore | "nextSequenceRecv/ports/{identifier}/channels/{identifier}"                 | uint64         | ICS 4      |
+| provableStore | "nextSequenceAck/ports/{identifier}/channels/{identifier}"                  | uint64         | ICS 4      |
+| provableStore | "commitments/ports/{identifier}/channels/{identifier}/sequences/{sequence}" | bytes          | ICS 4      |
+| provableStore | "receipts/ports/{identifier}/channels/{identifier}/sequences/{sequence}"    | bytes          | ICS 4      |
+| provableStore | "acks/ports/{identifier}/channels/{identifier}/sequences/{sequence}"        | bytes          | ICS 4      |
+
+Paths in the `provableStore` **must** be reserved for the IBC module's handler interface. In the event where new paths are added to the IBC spec they cannot be used by any other module. For the `privateStore` the paths can be used by other modules. However, to aid in simplicity as the `privateStore` refers to IBC related data, it would best be combined into a sigle IBC store.
+
+This allows for the paths to remain open for additions when/if they come from the IBC specification as it changes over time, but also allows for a more simplistic implementation as we can treat all the different stores as part of a single store related to the IBC module of the Pocket Network.
+
+## Host Requirements
+
+With all of the types and structures defined, the host (the Pocket Network IBC module) must provide certain access/introspections into the different stores and states. The following section details the functions that **must** be exposed by the host machine.
+
+### Consensus State Introspection
+
+The following types must be defined in line with the [ICS-02 specification](../ics02/ics02.md)
+
+```go
+type ConsensusState interface
+```
+
+This interface **must** be serialisable and as such should be defined as a protobuf for transmission in its serialised form.
+
+Along with this the following functions must be exposed
+
+```go
+func getCurrentHeight() uint64
+func getConsensusState(height uint64) ConsensusState
+func getStoredRecentConsensusStateCount() uint64
+```
+
+The host machine does not have to store the entirety of the consensus state history, but instead can store the latest `n` states. This is what is returned by `getStoredRecentConsensusStateCount()` after `n` states have been stored any new states added can prune the older ones, maintaining a constant store size of `consensusState` objects.
+
+### Client State Validation
+
+The following types must be defined in line with the [ICS-02 specification](../ics02/ics02.md)
+
+```go
+type ClientState interface
+```
+
+This interface **must** be serialisable and as such should be defined as a protobuf for transmission in its serialised form.
+
+The following functions must also be exposed
+
+```go
+func getHostClientState(height uint64) ClientState
+func validateSelfClient(counterPartyClient ClientState) bool
+```
+
+The `validateSelfClient()` function takes the `ClientState` object from a light client ran on another chain and performs some basic validation against the client state of the host machine. An implementation of this can be seen in the tendermint client implementation of ICS-07 [3][4]
+
+### Commitment Path Introspection
+
+The host machine must expose the following function that returns a **constant** value:
+
+```go
+func getCommitmentPrefix() CommitmentPrefix
+```
+
+The `CommitmentPrefix` is used in conjunction with the `CommitmentRoot` and `CommitmentState` objects and must satisfy the following flow:
+
+```go
+if provableStore.get(path) === value {
+    prefixedPath = applyPrefix(getCommitmentPrefix(), path)
+    if value != nil {
+        proof = createMembershipProof(state, prefixedPath, value)
+        if ok := verifyMembership(root, proof, prefixedPath, value); !ok {
+            panic("membership proof is not valid")
+        }
+    } else {
+        proof = createNonMembershipProof(state, prefixedPath)
+        if ok := verifyNonMembership(root, proof, prefixedPath); !ok {
+            panic("non-membership proof is not valid")
+        }
+    }
+}
+```
+
+### Timestamp access
+
+The host machine must expose the following function to provide the current UNIX timestamp
+
+```go
+func currentTimestamp() uint64
+```
+
+Timeouts in headers must be non-decreasing this is used as a check for timeouts to be put in place.
+
+### Port System
+
+Ports are defined as `Identifier` bytestrings. The IBC handler interface must allow for IBC sub-modules to bind to unique ports with the following constraints:
+
+- Once a port is bound to a sub-module, it must not be able to be used by another. Only once this port is released can it be used again
+- A single IBC sub-module can bind to many ports
+- Ports are allocated on a "first come, first served" basis. As such any "reserved" ports must be allocated at startup.
+
+The IBC handler interface must implement these rules as outlines in [ICS-05](../../phase2/ics05/ics05.md)
+
+### Datagram Submission
+
+Datagrams are sent by IBC relayers to the IBC module's routing interface as defined in ICS-26 [5]. These allow for the relayer to only ever send their packets to the IBC module and it will determine what sub-module these need to be routed to. In order for this to function the host machine must expose the following function
+
+```go
+func submitDatagram(datagram Datagram)
+```
+
+In order to this to function correctly, the host machine must define the requirements needed to submit `Datagram` objects to the host machine. This may include any transaction fees, account and signature requirements that the relayer must provide; this stops any tampering or illegitimate transactions to be submitted on chain.
+
+### Exception System
+
+The IBC host machine **must** support an exception system whereby a transaction can be aborted and any state changes can be reversed (excluding any fees paid), and any system invariant violation can halt the state machine. This requires the following functions:
+
+```go
+func abortTransaction(abort bool)
+func abortSystemUnless(abort bool)
+```
+
+In both functions if the `abort` parameter is `false` then nothing should happen. However, if it is `true` then the `abortTransaction()` function **must** abort the transaction taking place and revert any state changes (excluding fees) and the `abortSystemUnless()` function **must** cause the state machine to halt.
+
+This can be achieved through the use of savepoints in the Pocket Network, in reality we should not allow any transactions to be committed if they do not meet the previously defined requirements. In the case where they fail to meet these conditions they should not be allowed to be processed, and this error should be returned to the relayers.
+
+### Event Logging System
+
+The host machine must expose an event logging system such that arbitrary data can be stored, indexed and queried outside of the state vector. These event logs are used by the IBC relayers to read IBC packet data and timeouts, they are not stored directly on chain, but instead are committed to with a succinct cryptographic commitment, which is what gets stored.
+
+The following functions must be exposed:
+
+```go
+func emitLogEntry(topic string, data []byte)
+func queryByTopic(height uint64, topic string) [][]byte
+```
+
+In order to improve the efficiency of the relayers, multiple functions for the storing and querying of event data can be implemented but this is **not** required, and is only an optimisation.
+
+### Data Availability
+
+The host machine **must** following the following principals in order to achieve the desired data availability requirements:
+
+- Deliver-or-Timeout safety
+  - Host machines **must** have _eventual data availability_ such that any key/value pair in the state can be eventually retrieved by the relayers
+  - For exactly-once safety this is not a requirement
+- Liveness of packet relay
+  - Host machines must have _bounded transactional liveness_ (and thus consensus liveness) such that incoming transactions are confirmed within a block height bound (less than the timeout assigned to packets)
+- Data relied upon by relayers
+  - IBC packet data and other data not stored in the state vector **must** be available to **and** efficiently computed by relayer processes
+
+Light clients **may** have more strict data availability requirements
+
+### Handling Upgrades
+
+The IBC module is able to be updated as long as the following conditions are met:
+
+- All IBC handler logic **must** remain compliant with the IBC specification between upgrades
+- All IBC state (`provableStore` and `privateStore`) **must** remain persistent between upgrades
+- Any light client algorithm changes **must** be announced to any light clients running on counterparty chains **prior** to the implementation of such changes
+  - This enables them to upgrade safely and switch atomically, preserving the continuity of connections and channels
+
+## Implementation References
+
+The implementation of IBC-24 has many different facets to it. The path system can reference the `cosmos/ibc-go` implementation [6]. The other elements such as the stores can also reference the `cosmos/ibc-go` implementation but is more likely to differ in all but the high level concepts. As the later ICS components are implemented (ICS-02, ICS-03, ICS-05, ICS-04) the details around how ICS-24 will be used will become more clear and the implementation will become more Pocket specific.
 
 ## References
 
 [1] https://github.com/cosmos/ibc/tree/main/spec/core/ics-024-host-requirements
 
 [2] https://github.com/cosmos/ibc-rs/tree/main/crates/ibc#module-system-no-support-for-untrusted-modules
+
+[3] https://github.com/cosmos/ibc/tree/main/spec/core/ics-024-host-requirements#client-state-validation
+
+[4] https://github.com/cosmos/ibc/tree/main/spec/client/ics-007-tendermint-client
+
+[5] https://github.com/cosmos/ibc/tree/main/spec/core/ics-026-routing-module
+
+[6] https://github.com/cosmos/ibc-go/tree/main/modules/core/24-host
