@@ -65,7 +65,17 @@ How the overall state hash is calculated, can be seen in the following diagram a
 
 The `CommitmentPath` is the path used to verify a `CommitmentProof`. This is essentially the bytestring that is used to query the underlying KVStore of the `CommitmentState` and compare the value that it stores against whatever is trying to be proved. These paths have certain restrictions and are defined in [ICS-24](../ics24/ics24.md)
 
-The `CommitmentPath` does not need to be serlialisable but can be a list of tree nodes for example, it must simply provide the path needed to traverse the `CommitmentState` and return the value at the given `CommitmentPath`
+The `CommitmentPath` must follow the rules laid out in ICS-24 as this has strict definitions of the path spaces available in the different stores defined by the host machine. The `CommitmentPath` for a specific entry in the `ConsensusStore` would look like the following:
+
+```go
+[]byte("clients/{identifier}/consensusStates/{height}")
+```
+
+Or for a currently active connection:
+
+```go
+[]byte("connections/{identifier}")
+```
 
 ### CommitmentPrefix
 
