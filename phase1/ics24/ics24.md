@@ -14,9 +14,11 @@
   - [Private Store](#private-store)
   - [Backend Store](#backend-store)
     - [Consensus State](#consensus-state)
+  - [Current Implementations](#current-implementations)
 - [Path Space](#path-space)
 - [Host Requirements](#host-requirements)
   - [Consensus State Introspection](#consensus-state-introspection)
+    - [State Storage](#state-storage)
   - [Client State Validation](#client-state-validation)
   - [Commitment Path Introspection](#commitment-path-introspection)
   - [Timestamp access](#timestamp-access)
@@ -35,7 +37,7 @@ ICS-24 [1] defines the interfaces, types and other requirements that the IBC mod
 
 ## Module Structure
 
-The IBC module in V1 of the Pocket Network protocol must have a sub-module system, wherein each of the different aspects of the IBC module are implemented as sub-modules within the main IBC module. The specification details support for "untrusted" modules, however this is not necissary for our implementation. As we will be writing our modules ourselves, or vetting those that we decide to use (if any) we can follow the same pattern laid out in the implementation of `ibc-rs` [2] where they also do not support untrusted modules: but instead they assume all modules to be fully trusted.
+The IBC module in V1 of the Pocket Network protocol must have a sub-module system, wherein each of the different aspects of the IBC module are implemented as sub-modules within the main IBC module. The specification details support for "untrusted" modules, however this is not necessary for our implementation. As we will be writing our modules ourselves, or vetting those that we decide to use (if any) we can follow the same pattern laid out in the implementation of `ibc-rs` [2] where they also do not support untrusted modules: but instead they assume all modules to be fully trusted.
 
 In practice this will mean we have the following module structure:
 
@@ -57,7 +59,7 @@ flowchart TD
         CL[Client Semantics]
     end
     subgraph 3[ICS-03]
-        CO[Connection Sematics]
+        CO[Connection Semantics]
     end
     subgraph 5[ICS-05]
         PA[Port Allocation]
@@ -189,6 +191,70 @@ For the other stores the SMT with the node and value KVStores will work perfectl
    - Expose a function that allows for the current state to be exported in a standardised format (JSON, KVStores, Protobuf) that can be serialised into a `[]byte`
    - Expose a function that can hydrate this serialised `[]byte` back into the exported format and utilise the tree enum to rebuild the trees individually and recreate the 7 subtrees to create a proof as and when this is needed
 
+### Current Implementations
+
+Currently the `cosmos/ibc-go` package implements the stores using an IAVL backed by a KVStore such as `GoLevelDB` [3][4]. This is in a similar manner to what is proposed above. Essentially they have an struct `Store` that is initialised by each of the different stores required by IBC.
+
+For Pocket however, we should implment the `Store` interface which is implemented by a struct containing an `*smt.SparseMerkleTree` this would allow us to leverage the SMT to do a lot of the work without much oversight.Specifically this will simply mean utilising `pokt-network/smt` and the `kvstore.KVStore` type as the underlying KVStores to support the SMT. The implementation of this `Store` interface could follow along the lines of the code below:
+
+```go
+const (
+    treeStoreDir = "/var/trees"
+)
+
+var _ Store = &SMTStore{}
+
+type Store interface {
+    Get(path []byte) ([]byte, error)
+    Set(path, value []byte) error
+    Remove(path []byte) error
+    GetRoot() []byte
+    ...
+}
+
+type SMTStore struct {
+    tree *smt.SparseMerkleTree
+}
+
+func NewStore(prefix string) (*SMTStore, error) {
+    nodeStore, err := kvstore.NewKVStore(fmt.Sprintf("%s/%s_nodes", treesStoreDir, prefix)
+	if err != nil {
+		return nil, err
+	}
+    valuesStore, err := kvstore.NewKVStore(fmt.Sprintf("%s/%s_values", treesStoreDir, prefix)
+	if err != nil {
+		return nil, err
+	}
+
+    tree := smt.NewSparseMerkleTree(store.nodes, store.value, sha256.New())
+
+    return &Store{
+        tree,
+    }
+}
+
+func (s *SMTStore) Get(path []byte) ([]byte, error) {
+    return s.tree.Get(path)
+}
+
+func (s *SMTStore) Set(path, value []byte) error {
+    _, err := s.tree.Update(key, value)
+    return err
+}
+
+func (s *SMTStore) Remove(path []byte) error {
+    _, err := s.tree.Delete(path)
+    return err
+}
+
+func (s *SMTStore) GetRoot() []byte {
+    return s.tree.Root()
+}
+...
+```
+
+In regards to the `ConsensusStore` this will be more challenging. Most likely we will use a separate struct to implement the `Store` interface for this store specifically, due it containing multiple KVStores behind it. One method to achieve this, as defined above, is by utilising the exported trees as the values for each height in the `ConsensusStore`, and implementing custom logic to implement the `GetRoot()` function as well as for generating proofs that hydrates the sub trees and performs any required actions on them as is appropriate.
+
 ## Path Space
 
 The ICS-24 specification documents the following paths, their types and where they are used in the IBC module:
@@ -208,7 +274,7 @@ The ICS-24 specification documents the following paths, their types and where th
 | provableStore | "receipts/ports/{identifier}/channels/{identifier}/sequences/{sequence}"    | bytes          | ICS 4      |
 | provableStore | "acks/ports/{identifier}/channels/{identifier}/sequences/{sequence}"        | bytes          | ICS 4      |
 
-Paths in the `provableStore` **must** be reserved for the IBC module's handler interface. In the event where new paths are added to the IBC spec they cannot be used by any other module. For the `privateStore` the paths can be used by other modules. However, to aid in simplicity as the `privateStore` refers to IBC related data, it would best be combined into a sigle IBC store.
+Paths in the `provableStore` **must** be reserved for the IBC module's handler interface. In the event where new paths are added to the IBC spec they cannot be used by any other module. For the `privateStore` the paths can be used by other modules. However, to aid in simplicity as the `privateStore` refers to IBC related data, it would best be combined into a single IBC store interface that doesn't distinguish between private and provable.
 
 This allows for the paths to remain open for additions when/if they come from the IBC specification as it changes over time, but also allows for a more simplistic implementation as we can treat all the different stores as part of a single store related to the IBC module of the Pocket Network.
 
@@ -236,6 +302,10 @@ func getStoredRecentConsensusStateCount() uint64
 
 The host machine does not have to store the entirety of the consensus state history, but instead can store the latest `n` states. This is what is returned by `getStoredRecentConsensusStateCount()` after `n` states have been stored any new states added can prune the older ones, maintaining a constant store size of `consensusState` objects.
 
+#### State Storage
+
+We must maintain a reference to the latest `n` versions of the consensus state trees at any given time. However `n` is
+
 ### Client State Validation
 
 The following types must be defined in line with the [ICS-02 specification](../ics02/ics02.md)
@@ -253,7 +323,7 @@ func getHostClientState(height uint64) ClientState
 func validateSelfClient(counterPartyClient ClientState) bool
 ```
 
-The `validateSelfClient()` function takes the `ClientState` object from a light client ran on another chain and performs some basic validation against the client state of the host machine. An implementation of this can be seen in the tendermint client implementation of ICS-07 [3][4]
+The `validateSelfClient()` function takes the `ClientState` object from a light client ran on another chain and performs some basic validation against the client state of the host machine. An implementation of this can be seen in the tendermint client implementation of ICS-07 [5][6]
 
 ### Commitment Path Introspection
 
@@ -304,7 +374,7 @@ The IBC handler interface must implement these rules as outlines in [ICS-05](../
 
 ### Datagram Submission
 
-Datagrams are sent by IBC relayers to the IBC module's routing interface as defined in ICS-26 [5]. These allow for the relayer to only ever send their packets to the IBC module and it will determine what sub-module these need to be routed to. In order for this to function the host machine must expose the following function
+Datagrams are sent by IBC relayers to the IBC module's routing interface as defined in ICS-26 [7]. These allow for the relayer to only ever send their packets to the IBC module and it will determine what sub-module these need to be routed to. In order for this to function the host machine must expose the following function
 
 ```go
 func submitDatagram(datagram Datagram)
@@ -363,7 +433,7 @@ The IBC module is able to be updated as long as the following conditions are met
 
 ## Implementation References
 
-The implementation of IBC-24 has many different facets to it. The path system can reference the `cosmos/ibc-go` implementation [6]. The other elements such as the stores can also reference the `cosmos/ibc-go` implementation but is more likely to differ in all but the high level concepts. As the later ICS components are implemented (ICS-02, ICS-03, ICS-05, ICS-04) the details around how ICS-24 will be used will become more clear and the implementation will become more Pocket specific.
+The implementation of IBC-24 has many different facets to it. The path system can reference the `cosmos/ibc-go` implementation [8]. The other elements such as the stores can also reference the `cosmos/ibc-go` implementation but is more likely to differ in all but the high level concepts. As the later ICS components are implemented (ICS-02, ICS-03, ICS-05, ICS-04) the details around how ICS-24 will be used will become more clear and the implementation will become more Pocket specific.
 
 ## References
 
@@ -371,10 +441,14 @@ The implementation of IBC-24 has many different facets to it. The path system ca
 
 [2] https://github.com/cosmos/ibc-rs/tree/main/crates/ibc#module-system-no-support-for-untrusted-modules
 
-[3] https://github.com/cosmos/ibc/tree/main/spec/core/ics-024-host-requirements#client-state-validation
+[3] https://github.com/cosmos/cosmos-sdk/blob/main/store/rootmulti/store.go
 
-[4] https://github.com/cosmos/ibc/tree/main/spec/client/ics-007-tendermint-client
+[4] https://github.com/cosmos/cosmos-db
 
-[5] https://github.com/cosmos/ibc/tree/main/spec/core/ics-026-routing-module
+[5] https://github.com/cosmos/ibc/tree/main/spec/core/ics-024-host-requirements#client-state-validation
 
-[6] https://github.com/cosmos/ibc-go/tree/main/modules/core/24-host
+[6] https://github.com/cosmos/ibc/tree/main/spec/client/ics-007-tendermint-client
+
+[7] https://github.com/cosmos/ibc/tree/main/spec/core/ics-026-routing-module
+
+[8] https://github.com/cosmos/ibc-go/tree/main/modules/core/24-host
