@@ -39,7 +39,31 @@ The `CommitmentRoot` is the root hash of the `CommitmentState` object. By utilis
 func (*SMT) Root() []byte
 ```
 
-In the case of the `consensusState` specifically this will require the order of the trees to be known outside of `persistence` so that the copies/references to the SMT's at any given height can be hashed and concatenated in the correct order to properly reproduce the root hash.
+In the case of the `consensusState` specifically this will require the different subtrees to be accessable outside of `persistence`. This could be done by utilising some sort of export as done by the savepoint functionality. The different state tree's orders will then have to be known outside of `persistence` as well so that the SMT's at any given height can be rehydrated hashed and concatenated in the correct order to properly reproduce the root hash.
+
+How the overall state hash is calculated, can be seen in the following diagram, a more detail explanation can be found in the [Persistence Documentation](https://github.com/pokt-network/pocket/blob/main/persistence/docs/PROTOCOL_STATE_HASH.md#compute-state-hash)
+
+```mermaid
+sequenceDiagram
+    participant P as Persistence
+    participant PSQL as Persistence (SQL Store)
+    participant PKV as Persistence (Key-Value Store)
+
+    loop for each merkle tree type
+        P->>+PSQL: GetRecordsUpdatedAtHeight(height, recordType)
+        PSQL->>-P: records
+        loop for each state tree
+            P->>+PKV: Update(addr, serialize(record))
+            PKV->>-P: result, err_code
+        end
+        P->>+PKV: GetRoot()
+        PKV->>-P: rootHash
+    end
+
+    P->>P: stateHash = hash(concat(rootHashes))
+    activate P
+    deactivate P
+```
 
 ### CommitmentPath
 
