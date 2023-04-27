@@ -49,7 +49,7 @@ The `CommitmentPath` does not need to be serlialisable but can be a list of tree
 
 ### CommitmentPrefix
 
-The `CommitmentPrefix` is the bytestring prefix that is used to identify the individual store within the `CommitmentState` to correctly verify a proof. These are used with the `CommitmentPath` , with the following function:
+The `CommitmentPrefix` is the bytestring prefix that is used to identify the individual store within the `CommitmentState` to correctly verify a proof. These are used with the `CommitmentPath`, with the following function:
 
 ```go
 type Path string
