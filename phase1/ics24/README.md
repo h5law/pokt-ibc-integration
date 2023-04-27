@@ -118,8 +118,8 @@ func ValidateIdentifier(identifier string) bool {
     if len(identifier) != identifierLength {
         return false
     }
-    for _, c := range identifer {
-        if ok := strings.Contains(identifer, string(c)); !ok {
+    for _, c := range identifier {
+        if ok := strings.Contains(identifier, string(c)); !ok {
             return false
         }
     }
