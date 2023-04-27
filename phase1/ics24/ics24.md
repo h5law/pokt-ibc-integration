@@ -1,4 +1,4 @@
-# **ICS-25** (Host Requirements) <!-- omit in toc -->
+# **ICS-24** (Host Requirements) <!-- omit in toc -->
 
 **NOTE**: This document is still a work in progress and as such may change over time, as and when any issues are identified.
 
