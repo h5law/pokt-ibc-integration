@@ -41,28 +41,24 @@ func (*SMT) Root() []byte
 
 In the case of the `consensusState` specifically this will require the different subtrees to be accessable outside of `persistence`. This could be done by utilising some sort of export as done by the savepoint functionality. The different state tree's orders will then have to be known outside of `persistence` as well so that the SMT's at any given height can be rehydrated hashed and concatenated in the correct order to properly reproduce the root hash.
 
-How the overall state hash is calculated, can be seen in the following diagram, a more detail explanation can be found in the [Persistence Documentation](https://github.com/pokt-network/pocket/blob/main/persistence/docs/PROTOCOL_STATE_HASH.md#compute-state-hash)
+How the overall state hash is calculated, can be seen in the following diagram at a high level. A more detail explanation can be found in the [Persistence Documentation](https://github.com/pokt-network/pocket/blob/main/persistence/docs/PROTOCOL_STATE_HASH.md#compute-state-hash), however it is noted that the PostgreSQL database will not be used for this process, only the underlying KVStores of the consensus state's SMT are used.
 
 ```mermaid
-sequenceDiagram
-    participant P as Persistence
-    participant PSQL as Persistence (SQL Store)
-    participant PKV as Persistence (Key-Value Store)
+  sequenceDiagram
+    participant CS as ConsensusStore
+    participant CST as ConsensusState
+    participant S as SMT (Key-Value Store)
 
-    loop for each merkle tree type
-        P->>+PSQL: GetRecordsUpdatedAtHeight(height, recordType)
-        PSQL->>-P: records
-        loop for each state tree
-            P->>+PKV: Update(addr, serialize(record))
-            PKV->>-P: result, err_code
-        end
-        P->>+PKV: GetRoot()
-        PKV->>-P: rootHash
+    loop for each merkle tree
+      CS->>+CST: GetConsensusState(height)
+      CST->>-CS: serialisedState
+      CS->>+S: HydrateSMT(serialisedState)
+      S->>-CS: smt
+      CS->>+S: GetRoot(smt)
+      S->>-CS: rootHash
     end
 
-    P->>P: stateHash = hash(concat(rootHashes))
-    activate P
-    deactivate P
+    CS->>CS: stateHash = hash(concat(rootHashes))
 ```
 
 ### CommitmentPath
@@ -93,8 +89,15 @@ func (*SMT) Prove(key []byte) SparseMerkleProof
 
 ### Commitment Types Diagram
 
+This diagram documents the process in which a commitment proof is generated ready to verify upon request from an IBC relayer. This flow is triggered upon the receipt of an IBC packet asking for a proof that something has been included in the host machine's state, and asks for a proof to be generated for the counterparty to verify.
+
 ```mermaid
-flowchart LR
+flowchart TD
+  subgraph GPR[IBC Relayer]
+    Y[Path]
+    Z["GenerateProof(Path)"]
+    Y--Path-->Z
+  end
   subgraph CS[Commitment State]
     A[SMT]
     B[Nodes KVStore]
@@ -105,10 +108,17 @@ flowchart LR
   subgraph CR[Commitment Root]
     D[Root Hash]
   end
-  subgraph P[Commitment Path]
-    E[CommitmentPrefix]
-    G[CommitmentPath]
-    E --+Path--> G
+  subgraph HS[IBC Host Machine]
+    Q["GetStore(prefix)"]
+  end
+  subgraph HS2[IBC Host Machine]
+    E["applyPrefix(Path)"]
+    subgraph P[CommitmentPath]
+      F[CommitmentPrefix]
+      G[CommitmentPath]
+      F--+Path-->G
+    end
+    E-->P
   end
   subgraph CP[Commitment Proof]
     H[Existence Proof]
@@ -121,18 +131,23 @@ flowchart LR
     J --> L
     K --> L
   end
+  subgraph RE[IBC Relayer]
+    V["VerifyProof(proof, hash)"]
+  end
+  HS2 --CommitmentPrefix--> HS
+  HS --Stores--> CS
   CS --Calculate--> CR
-  F[Path] --> P
-  P --CommitmentPath--> GP
+  GPR --Path--> HS2
+  HS2 --CommitmentPath--> GP
   CS --CommitmentState--> GP
   GP --SparseMerkleProof-->CP
-  CR --> Verify
-  CP --> Verify
+  CR --RootHash--> RE
+  CP --CommitmentProof--> RE
 ```
 
 ## Types & Functions
 
-ICS-23 requires many type definitions, however there is a framework agnostic implementation of ICS-23 in Go [2] which we can utilise. This library defines the following types:
+ICS-23 requires many type definitions, however there is a framework agnostic implementation of ICS-23 in Go [2] which we can import and use within our codebase. This library defines the following types:
 
 **Relating to proofs** [3][4][5]:
 
