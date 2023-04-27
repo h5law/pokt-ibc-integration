@@ -304,7 +304,9 @@ The host machine does not have to store the entirety of the consensus state hist
 
 #### State Storage
 
-We must maintain a reference to the latest `n` versions of the consensus state trees at any given time. However `n` is
+We must maintain a reference to the latest `n` versions of the consensus state trees at any given time. However `n` is not going to be large. IBC packets ensure safety through a number of features, one being the use of timeouts. If a packet is not delivered and processed within the time frame it is discarded. This means that for the generous timeout period of 3 hours, and a blocktime of 15 minutes. The number of `consensusState` objects that we must store is only `12`.
+
+This does not take into account the block times of any counter party chains (which presumably is going to be much faster and therefore not relevant) but the main idea is that we allow a grace period between when the packet was sent and when it was received in our `consensusState` storage to allow for slightly older lookups.
 
 ### Client State Validation
 
