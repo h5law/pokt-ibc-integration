@@ -345,7 +345,7 @@ With all of the types and structures defined, the host (the Pocket Network IBC m
 
 ### Consensus State Introspection
 
-The following types must be defined in line with the [ICS-02 specification](../ics02/ics02.md)
+The following types must be defined in line with the [ICS-02 specification](../ics02/README.md)
 
 ```go
 type ConsensusState interface
@@ -371,7 +371,7 @@ This does not take into account the block times of any counter party chains (whi
 
 ### Client State Validation
 
-The following types must be defined in line with the [ICS-02 specification](../ics02/ics02.md)
+The following types must be defined in line with the [ICS-02 specification](../ics02/README.md)
 
 ```go
 type ClientState interface
@@ -433,7 +433,7 @@ Ports are defined as `Identifier` bytestrings. The IBC handler interface must al
 - A single IBC sub-module can bind to many ports
 - Ports are allocated on a "first come, first served" basis. As such any "reserved" ports must be allocated at startup.
 
-The IBC handler interface must implement these rules as outlines in [ICS-05](../../phase2/ics05/ics05.md)
+The IBC handler interface must implement these rules as outlines in [ICS-05](../../phase2/ics05/README.md)
 
 ### Datagram Submission
 
