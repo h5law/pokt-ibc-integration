@@ -1,6 +1,6 @@
 # **ICS-23** (Vector Commitments) <!-- omit in toc -->
 
-**NOTE**: This document is a work-in-progress living documest and, as such, may change over time, when issues are identified or new learnings are made.
+**NOTE**: This document is a work-in-progress living document and, as such, may change over time, when issues are identified or new learnings are made.
 
 - [Overview](#overview)
 - [Definitions](#definitions)
@@ -29,7 +29,7 @@ ICS-23 [1] entails the types, and functions, that enable the verification of the
 
 The `CommitmentState` is an object that contains the full state of the commitment, stored by the `manager` (the Pocket Network nodes). This means, in practice, that this is the underlying data structure that we use to store our state.
 
-For Pocket Network this will most likely be a wrapper around the `pokt-network/smt` library. In turn this means that for the `consensusState` that IBC defines (see [ICS-24](../ics24/ics24.md)), the `ConsensusState` object will be a copy/reference of the 7 merkle trees (accounts, transactions, params etc.) that is used to generate the state hash at any given height.
+For Pocket Network this will refer to the stores defined by the IBC module (see [ICS-24](../ics24/README.md)). These will not be exposed to outside the IBC module and as such the roots of these SMT trees will be the main point of interaction with the `CommitmentState` object.
 
 ### CommitmentRoot
 
@@ -39,31 +39,11 @@ The `CommitmentRoot` is the root hash of the `CommitmentState` object. By utilis
 func (*SMT) Root() []byte
 ```
 
-In the case of the `consensusState` specifically this will require the different subtrees to be accessable outside of `persistence`. This could be done by utilising some sort of export as done by the savepoint functionality. The different state tree's orders will then have to be known outside of `persistence` as well so that the SMT's at any given height can be rehydrated hashed and concatenated in the correct order to properly reproduce the root hash.
-
-How the overall state hash is calculated, can be seen in the following diagram at a high level. A more detail explanation can be found in the [Persistence Documentation](https://github.com/pokt-network/pocket/blob/main/persistence/docs/PROTOCOL_STATE_HASH.md#compute-state-hash), however it is noted that the PostgreSQL database will not be used for this process, only the underlying KVStores of the consensus state's SMT are used.
-
-```mermaid
-  sequenceDiagram
-    participant CS as ConsensusStore
-    participant CST as ConsensusState
-    participant S as SMT (Key-Value Store)
-
-    loop for each merkle tree
-      CS->>+CST: GetConsensusState(height)
-      CST->>-CS: serialisedState
-      CS->>+S: HydrateSMT(serialisedState)
-      S->>-CS: smt
-      CS->>+S: GetRoot(smt)
-      S->>-CS: rootHash
-    end
-
-    CS->>CS: stateHash = hash(concat(rootHashes))
-```
+In the case of the `consensusState` specifically this will require the different subtrees' state hashes to be stored within the `consensusState` object and then concatenated together in the correct order to generate the state hash at a given height. The state hash will also be a part of the `consensusState` object but the state tree's hashes will be present for their use in membership/non-membership proof verification. This is defined in [ICS-24](../ics24/README.md).
 
 ### CommitmentPath
 
-The `CommitmentPath` is the path used to verify a `CommitmentProof`. This is essentially the bytestring that is used to query the underlying KVStore of the `CommitmentState` and compare the value that it stores against whatever is trying to be proved. These paths have certain restrictions and are defined in [ICS-24](../ics24/ics24.md)
+The `CommitmentPath` is the path used to verify a `CommitmentProof`. This is essentially the bytestring that is used to query the underlying KVStore of the `CommitmentState` and compare the value that it stores against whatever is trying to be proved. These paths have certain restrictions and are defined in [ICS-24](../ics24/README.md)
 
 The `CommitmentPath` must follow the rules laid out in ICS-24 as this has strict definitions of the path spaces available in the different stores defined by the host machine. The `CommitmentPath` for a specific entry in the `ConsensusStore` would look like the following:
 
@@ -225,7 +205,7 @@ type SparseMerkleProof struct {
 	NonMembershipLeafData []byte
 
 	// SiblingData is the data of the sibling node to the leaf being proven,
-	// required for updatable proofs. For unupdatable proofs, is nil.
+	// required for updatable proofs. For un-updatable proofs, is nil.
 	SiblingData []byte
 }
 ```
@@ -244,10 +224,7 @@ func (*CommitmentState) CreateMembershipProof(Path, Value) *CommitmentProof
 func (*CommitmentState) CreateNonMembershipProof(Path) *CommitmentProof
 ```
 
-Here we can create the `CommitmentState` type to be an interface that wraps the functionality of the `pokt-network/smt` package and exposes the desired functions. In our situation the `Path` which we store our values under should either be:
-
-1. Prefixed with a store key
-2. Or we should have an subtree structure as we currently do in `persistence/state.go` - this would presumably still require some sort of Path prefix to determine the subtree
+Here we can create the `CommitmentState` type to be an interface that wraps the functionality of the `pokt-network/smt` package and exposes the desired functions. In our situation the `Path` which we store our values under should be prefixed with a store key.
 
 _NOTE:_ This can be decided on the implementation of ICS-24 (Host Requirements) [10] which defines the methods to retrieve the `Path` strings for elements stored in our different state tracking objects.
 
@@ -346,7 +323,7 @@ We should be able to utilise the `SiblingNodes` field of the `SparseMerkleProof`
 
 ## Trees & Paths
 
-As previously mentioned as a part of the IBC we will need to maintain multiple stores. We will have to track the consensus state, client state, connection state, channels, etc. We will be able to utilise the current subtree structure in `persistence/state.go` for our current consensus state with minimal changes (potentially just exporting different tree maps). The implementation of [ICS-24](../ics24/ics24.md) clarifies this in code, as it exposes the methods to retrieve the paths where we will look for different key-value pairs from the different trees. It also defines how we maintain the different KVStores that IBC will utilise to keep track of its state.
+As previously mentioned as a part of the IBC we will need to maintain multiple stores. We will have to track the consensus state, client state, connection state, channels, etc. We will be able to utilise the current subtree structure in `persistence/state.go` for our current consensus state with minimal changes (potentially just exporting different tree maps). The implementation of [ICS-24](../ics24/README.md) clarifies this in code, as it exposes the methods to retrieve the paths where we will look for different key-value pairs from the different trees. It also defines how we maintain the different KVStores that IBC will utilise to keep track of its state.
 
 The goal of ICS-23 is simply to be able to generate the relevant structures so as to verify the inclusion or absence of any element in a given `CommitmentState` - which we will define as a wrapper for an SMT tree. As such it is not important where those trees are, or how they are used, in order for this ICS to be successfully implemented.
 
