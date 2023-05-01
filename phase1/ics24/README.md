@@ -184,23 +184,86 @@ func (*SMT) Update(key, value []byte) (root []byte, err error)
 
 #### Consensus State
 
-For the other stores the SMT with the node and value KVStores will work perfectly fine, and the proofs will be easily generated for a given path. However, the `consensusStates` entry in the tree must contain the information of the 7 SMTs that make up the state as defined in `persistence/state.go`. In order to better store this data some potential routes are explored below:
+For the other stores the SMT with the node and value KVStores will work perfectly fine, and the proofs will be easily generated for a given path. However the `ConsensusState` object will look like the following, as it does in the tendermint light client [3]:
 
-1. Export state and rebuild the trees:
-   - Move the definitions of the order of the consensus state merkle trees (account, pools, transactions, etc.) into a protobuf enum in the shared directory.
-   - Expose a function that allows for the current state to be exported in a standardised format (JSON, KVStores, Protobuf) that can be serialised into a `[]byte`
-   - Expose a function that can hydrate this serialised `[]byte` back into the exported format and utilise the tree enum to rebuild the trees individually and recreate the 7 subtrees to create a proof as and when this is needed
+```protobuf
+message ConsensusState {
+    google.protobuf.Timestamp timestamp = 1;
+    bytes root = 2;
+    bytes next_validators_hash = 3;
+}
+```
+
+This allows us to easily verify whether the counterparty chain's Pocket Network light client is not tampering with blocks, by comparing root hashes. However, as our state hash is the concatenation of the root hashes of the sub trees we use to store our state it means that any proofs generated to check membership/non-membership of an element in one of these trees will not be able to be verified off of the state hash alone.
+
+Therefore we should adjust the `ConsensusState` protobuf message to the following:
+
+```protobuf
+message ConsensusState {
+    google.protobuf.Timestamp timestamp = 1;
+    bytes root = 2;
+    bytes next_validators_hash = 3;
+    map<string, string> state_tree_hashes = 4;
+}
+```
+
+Where `state_tree_hashes` will be a map of the state trees used to calculate the state hash via concatenation. This extra field will allow us to verify an element in the `ConsensusState` via the following logic:
+
+```go
+func (c *ConsensusState) VerifyMembership(proof *CommitmentProof, key, value []byte) bool {
+    // removePrefix([]byte("transactions/txHash")) -> []byte("transaction"), []byte("txHash")
+    prefix, path := removePrefix(key)
+
+    // Verify the proof against the correct state tree hash
+    treeHash := c.stateTreeHashes[string(prefix)]
+    if valid := ics23.VerifyMembership(ics23.SmtSpec{}, treeHash, proof, path, value); !valid {
+        return false
+    }
+
+    // Verify the root hash is the same when put together in the right order
+    treeHashMap = c.stateTreeHashes
+    treeHashMap[string(prefix)] = treeHash
+
+    roots := make([][]byte, 0)
+	for i := 0; i < coreTypes.NumStateTrees; i++ {
+		roots = append(roots, treeHashMap[coreTypes.stateTreeOrder[i]])
+	}
+
+	// Get the state hash
+	rootsConcat := bytes.Join(roots, []byte{})
+	stateHash := sha256.Sum256(rootsConcat)
+
+    // Compare against the ConsensusState's root hash
+	return hex.EncodeToString(stateHash[:]) == c.Root
+}
+```
+
+This will require an enum to be made in the `shared/core/types/proto` directory detailing the order in which the state trees are to be concatenated to generate the state hash. The number of trees and a map to get their string names should also be exposed.
+
+To better generalise this function it may be such that depending on the `path` of the key being verified this function may be called or else the generic verification flow should be done instead.
 
 ### Current Implementations
 
-Currently the `cosmos/ibc-go` package implements the stores using an IAVL backed by a KVStore such as `GoLevelDB` [3][4]. This is in a similar manner to what is proposed above. Essentially they have an struct `Store` that is initialised by each of the different stores required by IBC.
+Currently the `cosmos/ibc-go` package implements the stores using an IAVL backed by a KVStore such as `GoLevelDB` [4][5]. This is in a similar manner to what is proposed above. Essentially they have an struct `Store` that is initialised by each of the different stores required by IBC.
 
 For Pocket however, we should implment the `Store` interface which is implemented by a struct containing an `*smt.SparseMerkleTree` this would allow us to leverage the SMT to do a lot of the work without much oversight.Specifically this will simply mean utilising `pokt-network/smt` and the `kvstore.KVStore` type as the underlying KVStores to support the SMT. The implementation of this `Store` interface could follow along the lines of the code below:
 
 ```go
 const (
-    treeStoreDir = "/var/trees"
+    ibcStoreDir = "/var/ibc"
 )
+
+type StoreManager struct {
+    Stores map[string]Store
+}
+
+func (sm *StoreManager) GetStore(storeKey string) Store {
+    return sm.Stores[storeKey]
+}
+
+func (sm *StoreManager) AddStore(store Store, storeKey string) {
+    sm.Stores[storeKey] = store
+}
 
 var _ Store = &SMTStore{}
 
@@ -214,36 +277,34 @@ type Store interface {
 
 type SMTStore struct {
     tree *smt.SparseMerkleTree
+    storeKey string
 }
 
-func NewStore(prefix string) (*SMTStore, error) {
-    nodeStore, err := kvstore.NewKVStore(fmt.Sprintf("%s/%s_nodes", treesStoreDir, prefix)
+func NewStore(storeKey string) (*SMTStore, error) {
+    nodeStore, err := kvstore.NewKVStore(fmt.Sprintf("%s/%s_nodes", ibcStoreDir, storeKey)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-    valuesStore, err := kvstore.NewKVStore(fmt.Sprintf("%s/%s_values", treesStoreDir, prefix)
-	if err != nil {
-		return nil, err
-	}
-
-    tree := smt.NewSparseMerkleTree(store.nodes, store.value, sha256.New())
-
-    return &Store{
+    tree := smt.NewSMT(nodeStore, sha256.New())
+    store := &SMTStore{
         tree,
+        storeKey,
     }
+    StoreManager.AddStore(store, store.storeKey);
+    return store, nil
 }
 
-func (s *SMTStore) Get(path []byte) ([]byte, error) {
-    return s.tree.Get(path)
+func (s *SMTStore) Get(key []byte) ([]byte, error) {
+    return s.tree.Get(key)
 }
 
-func (s *SMTStore) Set(path, value []byte) error {
+func (s *SMTStore) Set(key, value []byte) error {
     _, err := s.tree.Update(key, value)
     return err
 }
 
-func (s *SMTStore) Remove(path []byte) error {
-    _, err := s.tree.Delete(path)
+func (s *SMTStore) Remove(key []byte) error {
+    _, err := s.tree.Delete(key)
     return err
 }
 
@@ -253,7 +314,7 @@ func (s *SMTStore) GetRoot() []byte {
 ...
 ```
 
-In regards to the `ConsensusStore` this will be more challenging. Most likely we will use a separate struct to implement the `Store` interface for this store specifically, due it containing multiple KVStores behind it. One method to achieve this, as defined above, is by utilising the exported trees as the values for each height in the `ConsensusStore`, and implementing custom logic to implement the `GetRoot()` function as well as for generating proofs that hydrates the sub trees and performs any required actions on them as is appropriate.
+The IBC module has the need for 10 unique stores, each of which will store different values depending on the path.
 
 ## Path Space
 
@@ -325,7 +386,7 @@ func getHostClientState(height uint64) ClientState
 func validateSelfClient(counterPartyClient ClientState) bool
 ```
 
-The `validateSelfClient()` function takes the `ClientState` object from a light client ran on another chain and performs some basic validation against the client state of the host machine. An implementation of this can be seen in the tendermint client implementation of ICS-07 [5][6]
+The `validateSelfClient()` function takes the `ClientState` object from a light client ran on another chain and performs some basic validation against the client state of the host machine. An implementation of this can be seen in the tendermint client implementation of ICS-07 [6][7]
 
 ### Commitment Path Introspection
 
@@ -376,7 +437,7 @@ The IBC handler interface must implement these rules as outlines in [ICS-05](../
 
 ### Datagram Submission
 
-Datagrams are sent by IBC relayers to the IBC module's routing interface as defined in ICS-26 [7]. These allow for the relayer to only ever send their packets to the IBC module and it will determine what sub-module these need to be routed to. In order for this to function the host machine must expose the following function
+Datagrams are sent by IBC relayers to the IBC module's routing interface as defined in ICS-26 [8]. These allow for the relayer to only ever send their packets to the IBC module and it will determine what sub-module these need to be routed to. In order for this to function the host machine must expose the following function
 
 ```go
 func submitDatagram(datagram Datagram)
@@ -435,7 +496,7 @@ The IBC module is able to be updated as long as the following conditions are met
 
 ## Implementation References
 
-The implementation of IBC-24 has many different facets to it. The path system can reference the `cosmos/ibc-go` implementation [8]. The other elements such as the stores can also reference the `cosmos/ibc-go` implementation but is more likely to differ in all but the high level concepts. As the later ICS components are implemented (ICS-02, ICS-03, ICS-05, ICS-04) the details around how ICS-24 will be used will become more clear and the implementation will become more Pocket specific.
+The implementation of IBC-24 has many different facets to it. The path system can reference the `cosmos/ibc-go` implementation [9]. The other elements such as the stores can also reference the `cosmos/ibc-go` implementation but is more likely to differ in all but the high level concepts. As the later ICS components are implemented (ICS-02, ICS-03, ICS-05, ICS-04) the details around how ICS-24 will be used will become more clear and the implementation will become more Pocket specific.
 
 ## References
 
@@ -443,14 +504,16 @@ The implementation of IBC-24 has many different facets to it. The path system ca
 
 [2] https://github.com/cosmos/ibc-rs/tree/main/crates/ibc#module-system-no-support-for-untrusted-modules
 
-[3] https://github.com/cosmos/cosmos-sdk/blob/main/store/rootmulti/store.go
+[3] https://github.com/cosmos/ibc-go/blob/a25f0d421c32b3a2b7e8168c9f030849797ff2e8/proto/ibc/lightclients/tendermint/v1/tendermint.proto#L53
 
-[4] https://github.com/cosmos/cosmos-db
+[4] https://github.com/cosmos/cosmos-sdk/blob/main/store/rootmulti/store.go
 
-[5] https://github.com/cosmos/ibc/tree/main/spec/core/ics-024-host-requirements#client-state-validation
+[5] https://github.com/cosmos/cosmos-db
 
-[6] https://github.com/cosmos/ibc/tree/main/spec/client/ics-007-tendermint-client
+[6] https://github.com/cosmos/ibc/tree/main/spec/core/ics-024-host-requirements#client-state-validation
 
-[7] https://github.com/cosmos/ibc/tree/main/spec/core/ics-026-routing-module
+[7] https://github.com/cosmos/ibc/tree/main/spec/client/ics-007-tendermint-client
 
-[8] https://github.com/cosmos/ibc-go/tree/main/modules/core/24-host
+[8] https://github.com/cosmos/ibc/tree/main/spec/core/ics-026-routing-module
+
+[9] https://github.com/cosmos/ibc-go/tree/main/modules/core/24-host
